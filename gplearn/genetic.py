@@ -1,6 +1,23 @@
 from abc import ABCMeta, abstractmethod
+from gplearn.utils import check_random_state
 from sklearn.utils.validation import check_X_y
 from sklearn.base import BaseEstimator, check_array, ClassifierMixin
+
+def _parallel_evolve(n_programs, parents, X, y, sample_weight, seeds, params):
+
+    n_samples, n_features = X.shape
+
+    programs = []
+
+    for i in range(n_programs):
+        # 先检查随机数种子
+        random_state = check_random_state(seeds[i])
+
+        if parents is None:
+            program = None
+            genome = None
+
+
 
 class BaseSymbolic(BaseEstimator, metaclass=ABCMeta):
     """Base class for symbolic regression / classification estimators"""
