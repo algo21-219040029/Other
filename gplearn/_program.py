@@ -1,7 +1,8 @@
 import numpy as np
 from copy import copy
-from typing import List, Tuple, Optional, Dict
+from numpy.random import RandomState
 from gplearn.functions import _Function
+from typing import List, Tuple, Optional, Dict
 
 class _Program:
     """
@@ -16,17 +17,46 @@ class _Program:
                  init_depth,
                  init_method,
                  n_features: int,
-                 feature_names
+                 const_range: Tuple[float],
+                 random_state,
+                 feature_names,
+                 program: List[Optional] = None
                  ):
         self.function_set: List[_Function] = function_set
-        self.arities: Dict[int, _Function] = arities
+        self.arities: Dict[int, List[_Function]] = arities
         self.init_depth = init_depth
         self.init_method = init_method
         self.n_features: int = n_features
+        self.const_range: Tuple[float] = const_range
         self.feature_names = feature_names
+        self.program: List[Optional] = program
 
-    def build_program(self, random_state):
+        # 检查program
+        # 如果在实例化时输入了program, 则预先检查program
+        if self.program is not None:
+            # 如果program不有效，则报错
+            if not self.validate_program():
+                raise ValueError('The supplied program is incomplete.')
+        # 如果在实例化时没有输入program，则利用build_program先初始化program
+        else:
+            self.program = self.build_program(random_state)
 
+
+    def build_program(self, random_state: RandomState) -> List[Optional]:
+        """
+        在没有指定program的情况下，随机创建一个naive的program
+
+        Parameters
+        ----------
+        random_state: numpy.random.RandomState
+                      随机种子状态
+
+        Returns
+        -------
+        program: List[Optional]
+                 树的内容，元素为函数(_Function)或常数或变量
+        """
+        # 初始方法有full, grow, half and half三种方法
         if self.init_method =='half and half':
             method = ('full' if random_state.randint(2) else 'grow')
         else:
@@ -35,7 +65,9 @@ class _Program:
         # 最大深度
         max_depth = random_state.randint(*self.init_depth)
 
-        # 初始化
+        # 初始化，随机从function_set中选出一个函数
+        # 将挑选出的函数添加到program中
+        # 将挑选出的函数的参数个数添加到terminal_stack中
         function = random_state.randint(len(self.function_set))  # 随机挑选一个函数结点
         function = self.function_set[function]                   # 随机挑选一个函数
         program = [function]                                     # 向program中添加函数
@@ -43,11 +75,11 @@ class _Program:
 
         # 开始生成树
         while terminal_stack:
-            # 树的深度
+            # 树的深度（函数个数=树的深度（指有多少层子结点），因为这里是按照深度优先搜索)
             depth: int = len(terminal_stack)
             # choice等于特征数+函数数，表示选择数
             choice: int = self.n_features + len(self.function_set)
-            # 随机选择
+            # 随机选择生成一个整数
             choice: int = random_state.randint(choice)
 
             # 如果树的深度小于最大深度且选择full的方法生成树且choice小于等于可选函数个数
@@ -61,33 +93,77 @@ class _Program:
                 # 向terminal_stack中添加函数参数数目
                 terminal_stack.append(function.arity)
             else:
-                # 如果包括常数
+                # 如果包括常数, cost_range代表常数数值范围
                 if self.const_range is not None:
                     terminal = random_state.randint(self.n_features+1)
                 # 如果不包含常数
                 else:
                     terminal = random_state.randint(self.n_features)
+                # 只有randint(self.n_features+1)的情况下才有可能满足条件，此时添加常数
                 if terminal == self.n_features:
+                    # 在cost_range所规定的范围内生成常数
                     terminal = random_state.uniform(*self.const_range)
                     if self.const_range is None:
                         raise ValueError('A constant was produced with '
                                          'const_range=None.')
+
+                # 如果是变量，则terminal为整数;如果是常数，则terminal为常数本身
                 program.append(terminal)
+                # 所在结点一个子结点完成处理
                 terminal_stack[-1] -= 1
+                # 如果一个结点的所有子结点都处理完毕，则删除该结点，同时上一层结点也-1
+                # 如果所有子结点都处理完毕，则返回program，结束处理
                 while terminal_stack[-1] == 0:
                     terminal_stack.pop()
                     if not terminal_stack:
                         return program
                     terminal_stack[-1] -= 1
-
+        # We should never get here
         return None
 
-    def validate_program(self):
+    def validate_program(self) -> bool:
+        """
+        检查self.program是否是有效
+
+        检查方法原理: 如果是合法的，则函数的参数减1时必然会恰好将terminals中的元素pop，然后再减到-1，初始的0也是为了这个准备。
+
+        检查方法举例:
+
+        合法情况: 设表达式为add(x,y)
+
+        1.初始: terminals = [0]
+
+        2.第一轮: terminals = [0, 2]
+
+        3.第二轮: terminals = [0, 1]
+
+        4.第三轮: terminals = [0, 0], terminals = [0], terminals = [-1]
+
+        非法情况: program = [add, x, y, z] (add仅接受2个参数)
+
+        1.初始: terminals = [0]
+
+        2.第一轮: terminals = [0, 2]
+
+        3.第二轮: terminals = [0, 1]
+
+        4.第三轮: terminals = [0, 0], terminals = [-1]
+
+        5.第四轮: terminals = [-2]，最终返回False
+
+        Returns
+        -------
+        terminals == [-1]: bool
+                           program是否合法
+        """
+        # 最终结点的terminals
         terminals = [0]
+        # 遍历program中的每个结点
         for node in self.program:
-            # 每一个结点都是一个_Function类型, terminals用来记录每个函数的参数个数
+            # 如果结点为函数，则在terminals中添加函数参数个数
             if isinstance(node, _Function):
                 terminals.append(node.arity)
+            # 如果结点是变量(包括常量)，则不向terminals中添加, 反而对上一个函数结点进行减1操作
             else:
                 terminals[-1] -= 1
                 while terminals[-1] == 0:
@@ -95,10 +171,19 @@ class _Program:
                     terminals[-1] -= 1
         return terminals == [-1]
 
-    def __str__(self):
+    def __str__(self) -> str:
+        """
+        展示树代表的表达式
+
+        Returns
+        -------
+
+        """
         terminals = [0]
         output = ''
+        # 遍历（按深度优先搜索）
         for i, node in enumerate(self.program):
+            # 如果结点是函数，则terminals中添加元素，代表深度增加了一层
             if isinstance(node, _Function):
                 terminals.append(node.arity)
                 output += node.name + '('
@@ -106,16 +191,30 @@ class _Program:
             else:
                 # 遇到node是整数的情况
                 if isinstance(node, int):
+                    # 如果没有feature_names属性，则直接为乘该整数
                     if self.feature_names is None:
                         output += f"X{node}"
+                    # 如果有feature_names属性，则添加该属性
                     else:
                         output += self.feature_names[node]
                 # 遇到node是浮点数的情况
                 else:
-                    pass
+                    output += '%.3f' % node
+                # 处理完一个非函数结点后对terminals的最后一个元素减1
+                terminals[-1] -= 1
+                # 如果处理完一个函数结点
+                while terminals[-1] == 0:
+                    terminals.pop()
+                    terminals[-1] -= 1
+                    output += ')'
+                # 如果不是最后一个结点,则需要加逗号
+                if i != len(self.program)-1:
+                    output += ', '
+        return output
 
     def _depth(self):
-        pass
+        # 初始化terminals
+        terminals = [0]
 
     def _length(self):
         """
@@ -267,7 +366,26 @@ class _Program:
                 replacement:_Function = self.arities[arity][replacement]
                 program[node] = replacement
             else:
-                pass
+                # 如果需要常数项
+                if self.const_range is not None:
+                    terminal = random_state.randint(self.n_features+1)
+                else:
+                    terminal = random_state.randint(self.n_features)
+                # terminal如果能等于self.n_features, 说明需要常数项
+                if terminal == self.n_features:
+                    terminal = random_state.randint(*self.const_range)
+                    if self.const_range is None:
+                        # We should never get here
+                        raise ValueError('A constant was produced with '
+                                         'const_range=None.')
+                program[node] = terminal
+
+        return program, list(mutate)
+
+    depth_ = property(_depth)
+    length_ = property(_length)
+    indices_ = property(_indices)
+
                 
 
 
