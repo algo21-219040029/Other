@@ -1,8 +1,9 @@
 import numpy as np
 from copy import copy
+from pandas import DataFrame
 from numpy.random import RandomState
 from gplearn.functions import _Function
-from typing import List, Tuple, Optional, Dict
+from typing import List, Tuple, Optional, Dict, Union
 
 class _Program:
     """
@@ -42,7 +43,7 @@ class _Program:
             self.program = self.build_program(random_state)
 
 
-    def build_program(self, random_state: RandomState) -> List[Optional]:
+    def build_program(self, random_state: RandomState) -> Union[List[Optional], None]:
         """
         在没有指定program的情况下，随机创建一个naive的program
 
@@ -212,9 +213,31 @@ class _Program:
                     output += ', '
         return output
 
-    def _depth(self):
+    def _depth(self) -> int:
+        """
+        获取树的深度
+
+        Returns
+        -------
+        depth-1: int
+                 树的深度
+        """
         # 初始化terminals
         terminals = [0]
+        # 初始深度为1，但是实际深度为depth-1
+        depth = 1
+        # 遍历所有的结点
+        for node in self.program:
+            # 如果是函数结点
+            if isinstance(node, _Function):
+                terminals.append(node.arity)
+                depth = max(len(terminals), depth)
+            else:
+                terminals[-1] = -1
+                while terminals[-1] == 0:
+                    terminals.pop()
+                    terminals[-1] -= 1
+        return depth - 1
 
     def _length(self):
         """
@@ -228,9 +251,15 @@ class _Program:
         length: int = len(self.program)
         return length
 
-    def execute(self, X):
+    def execute(self, X: Dict[str, DataFrame]):
+        # 最开始的结点
         node = self.program[0]
+        # node为浮点数表示其为一个数字
+        if isinstance(node, float):
+            return np.repeat()
 
+
+    # 从这里开始修改
     def fitness(self):
         pass
 

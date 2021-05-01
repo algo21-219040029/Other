@@ -51,6 +51,9 @@ class BaseSymbolic(BaseEstimator, metaclass=ABCMeta):
 
         # for gen in range(prior_generations, self.generations)
 
+    def fit_transform(self, X, y, sample_weight=None):
+
+
 
 
 
